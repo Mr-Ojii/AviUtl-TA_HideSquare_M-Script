@@ -1,0 +1,257 @@
+--track0:in/out,-100,100,0,0.01
+--track1:delay,0,100,10,0.01
+--track2:angle,-3600,3600,-90,0.1
+--track3:----,-10000,10000,0,0.01
+--dialog:color/col,_1=0xffffff;curve_id,_2={0,0};curve,_3={0,0};mode,_4={0,0};cover_all/chk,_5=0;order,_6={0,0};seed,_7={0,0};PI,_0=nil;
+
+--[[
+  ## パラメータ説明
+  - in/out     :登場・退場のパーセンテージ
+  - delay      :ズレのパーセンテージ
+  - angle      :クリッピング角度
+  - color      :四角の色
+  - curve_id   :0:ベジエ,1:ベジエ複数,3:振動,4:バウンス(Curve Editorのバージョンにより変更有)
+  - curve      :Curve Editorの数値やid
+  - mode       :表示モード 0:すべて,1:文字のみ,2:四角のみ
+  - cover_all  :-50,50で必ずすべてを覆う
+  - order      :表示順序
+  - seed       :ランダム表示用のシード
+  - PI         :インジェクション用
+
+  ダイアログのパラメータで`{}`に囲まれているものは、`{in,out}`に対応します
+  curve_id, curveは配列の要素数により、カーブの挙動が変更されます
+]]
+
+-- function
+local function clamp(n, min, max)
+  return math.min(math.max(n, min), max)
+end
+
+-- 93氏のTA-Trackからそのまま
+local function sequence(t,delay,index,num)
+	if (t < 0) then t, index = -t, num-index end
+	return clamp(t*(1+delay*num) - delay*index, 0, 1)
+end
+
+local function shuffle_tbl(tbl,seed)
+	local count = #tbl
+	math.randomseed(seed or 0)
+	local j
+	for i = count,2,-1 do
+		j = math.random(i)
+		tbl[i], tbl[j] = tbl[j], tbl[i]
+	end
+	return tbl
+end
+--
+--
+
+-- option
+_0 = _0 or {}
+local progress = clamp((_0[1] or obj.track0) * 0.01, -1, 1)
+local delay = clamp((_0[2] or obj.track1) * 0.01, 0, 1)
+local angle = _0[3] or obj.track2
+_0 = nil
+local col = _1 or 0xffffff
+
+local curve_id_list = _2 or {0}
+local curve_list = _3 or {0}
+
+local curve_count = math.min(#curve_id_list, #curve_list)
+
+local i_mode = _4[1] or 0
+local o_mode = _4[2] or 0
+local cover_all = _5 or 0
+local i_order = _6[1] or 0
+local o_order = _6[2] or 0
+local i_seed = _7[1] or 0
+local o_seed = _7[2] or 0
+
+_1 = nil
+_2 = nil
+_3 = nil
+_4 = nil
+_5 = nil
+_6 = nil
+_7 = nil
+--
+
+-- include
+local modname="curve_editor"
+if not package.loaded[modname] then
+	package.preload[modname]=package.loadlib(modname .. ".auf","luaopen_" .. modname)
+  if package.preload[modname] ~= nil then
+	  require(modname)
+  end
+	package.preload[modname]=nil
+end
+--
+
+
+-- main
+-- https://scrapbox.io/ePi5131/Lua_(AviUtl)_%E3%82%88%E3%81%8F%E3%81%A4%E3%81%8B%E3%81%86%E8%87%AA%E4%BD%9C%E9%96%A2%E6%95%B0 より
+local function copy_posinfo(d,s)for k in("ox oy oz cx cy cz rx ry rz zoom aspect alpha"):gmatch("%a+")do d[k]=s[k]end end
+local obj2={}
+copy_posinfo(obj2,obj)
+--------------
+--うまく隠れないことがあるので、とりあえずつけとく
+obj.effect("領域拡張", "上", 1, "下", 1, "左", 1, "右", 1)
+local bw, bh = obj.getpixel()
+--
+
+--curve
+--progは0-1
+local prog = 0
+local curve_id = curve_id_list[math.floor((progress + 1) / (2 / curve_count)) + 1]
+local curve = curve_list[math.floor((progress + 1) / (2 / curve_count)) + 1]
+local mode = 0
+local order = 0
+local seed = 0
+
+if progress < 0 then
+  prog = progress + 1
+  mode = i_mode
+  order = i_order
+  seed = i_seed
+elseif 0 <= progress then
+  prog = progress
+  mode = o_mode
+  order = o_order
+  seed = o_seed
+end
+
+-- 93氏のだと3番が壊れてるので直した
+local Order = ({
+  [0] = function() return obj.index end,
+  function() return obj.num-1-obj.index end,
+  function()
+    return math.abs((obj.num) - obj.index*2 - 1)
+  end,
+  function()
+    return obj.num - math.abs((obj.num) - obj.index*2 - 1) - 1
+  end,
+  function(seed)
+    local id = {}
+    for i=1,obj.num do id[i] = i-1 end
+    return shuffle_tbl(id,seed)[obj.index+1]
+  end
+})[order%5]
+--
+
+local index_num = Order(seed or 1)
+
+if cover_all ~= 0 then
+  if prog < 0.5 then
+    prog = sequence(prog * 2, delay, index_num, obj.num - 1) / 2
+  else
+    prog = sequence((prog - 0.5) * 2, delay, index_num, obj.num - 1) / 2 + 0.5
+  end
+else
+  prog = sequence(prog, delay, index_num, obj.num - 1)
+end
+
+if progress < 0 then
+  progress = prog - 1
+elseif progress > 0 then
+  progress = prog
+end
+
+local ku = 2 / curve_count
+local co = math.floor((progress + 1) / ku)
+local tmp_prog = ((progress + 1) % ku) / ku
+
+-- あとでeasing.luaにも対応しようかな
+-- とりあえず、年内公開優先したい
+if curve_editor ~= nil then
+  progress = clamp(curve_editor.getcurve(curve_id, curve, tmp_prog, co * ku, (co + 1) * ku) - 1, -1, 1)
+end
+
+if progress < 0 then
+  prog = progress + 1
+elseif progress > 0 then
+  prog = progress
+end
+
+-- 裏API
+if false then
+  if (type(HiSqAPI) ~= "table") then
+    HiSqAPI = {}
+  end
+  HiSqAPI["num"] = obj.num
+  HiSqAPI[obj.index + 1] = obj2
+  HiSqAPI[obj.index + 1]["prog"] = progress
+  HiSqAPI[obj.index + 1]["bw"] = bw
+  HiSqAPI[obj.index + 1]["bh"] = bh
+end
+
+-- debug_print(obj.index..","..obj.num..",("..curve_id..","..curve..","..mode.."),("..bw..","..bh.."),"..prog..","..progress)
+------
+
+--斜めクリッピングのパラメータ計算
+
+--角度を0以上360未満に正規化
+angle = ((angle % 360) + 360) % 360
+
+local clip_x, clip_y = 0, 0
+--bwとbhに+4をしないと、完全に隠れない
+if prog <= 0.5 then
+  clip_x, clip_y = prog * 2 * (bw + 4), prog * 2 * (bh + 4);
+else
+  clip_x, clip_y = (prog - 0.5) * 2 * (bw + 4), (prog - 0.5) * 2 * (bh + 4);
+end
+
+clip_x = math.floor(clip_x) - (bw + 2) / 2
+clip_y = math.floor(clip_y) - (bh + 2) / 2
+
+if angle < 180 then
+  clip_x = -clip_x
+end
+if angle >= 90 and angle <= 270 then
+  clip_y = -clip_y
+end
+
+if (-0.5 < progress and progress <= 0) or (0.5 < progress and progress <= 1) then
+  angle = (angle + 180) % 360
+end
+-----------------------------
+--画像ループ用に保持しておく
+obj.copybuffer("cache:HiSqOrg", "obj")
+--
+obj.setoption("drawtarget","tempbuffer", bw, bh)
+
+if (mode ~= 2) then
+  if (-0.5 <= progress and progress < 0.5) then
+    --オブジェクトにクリッピング
+    if (progress ~= 0) then
+      obj.effect("斜めクリッピング", "角度", (angle + 180) % 360, "中心X", clip_x, "中心Y", clip_y, "ぼかし", 0)
+    end
+    --文字描画
+    obj.copybuffer("tmp", "obj")
+  end
+end
+--キャッシュとっとかないと、obj.effect内でtmp使われたら壊れる
+obj.copybuffer("cache:HiSq", "tmp")
+----------
+
+--四角の描画
+obj.load("figure", "四角形", col, math.max(bw, bh))
+--
+obj.effect("リサイズ", "X", bw + 2, "Y", bh + 2, "補間なし", 0, "ドット数でサイズ指定", 1)
+obj.effect()
+obj.copybuffer("tmp", "cache:HiSq")
+copy_posinfo(obj,obj2)
+if (progress ~= 0) and (mode ~= 1) then
+  obj.effect("斜めクリッピング", "角度", angle, "中心X", clip_x, "中心Y", clip_y, "ぼかし", 0)
+else
+  obj.effect("斜めクリッピング", "角度", 0, "中心Y", -bh, "ぼかし", 0)
+end
+obj.draw()
+-----------
+
+obj.copybuffer("obj", "tmp")
+obj.setoption("drawtarget","framebuffer")
+obj.draw()
+
+--画像ループの個別オブジェクト使用時、次のobjが現在のobj依存であるため戻しておく
+obj.copybuffer("obj", "cache:HiSqOrg")
+--
